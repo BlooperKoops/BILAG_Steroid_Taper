@@ -274,6 +274,16 @@
         <p class="sub">No patient name or NHS number is collected anywhere on this page &mdash; only the dates and doses below.</p>
 
         <div class="field">
+          <label for="screenGroup">Is this taper for renal or non-renal lupus?</label>
+          <select id="screenGroup">
+            <option value="nonrenal">Non-renal (SLE flare)</option>
+            <option value="renal">Renal (lupus nephritis)</option>
+            <option value="custom">Custom / other plan</option>
+          </select>
+          <p class="hint">Narrows the regimen list below to the plans that apply.</p>
+        </div>
+
+        <div class="field">
           <label for="startDate">Regimen start date</label>
           <input type="date" id="startDate">
           <p class="hint" id="startDateHint">Oral prednisolone will begin on this date.</p>
@@ -507,10 +517,21 @@
     },
     "Custom": { weightBased:false, ivOptions:null, steps:[] }
   };
-  var REGIMEN_ORDER = ["Mild SLE Flare (15mg)","Mild SLE Flare (10mg)","Moderate SLE Flare (30mg)",
-    "Moderate SLE Flare (20mg)","Severe SLE Flare (0.5mg/kg)","Severe SLE Flare (0.6mg/kg)",
-    "LN Standard (0.5mg/kg)","LN Standard (0.6mg/kg)","LN Higher (0.6mg/kg)","LN Higher (0.7mg/kg)",
-    "LN Exceptional (0.8mg/kg)","LN Exceptional (1.0mg/kg)","Tapering off 5mg — fast","Tapering off 5mg — slow","Custom"];
+  // Screening question groups: which regimens apply to renal vs non-renal lupus.
+  var REGIMEN_GROUPS = {
+    nonrenal: ["Mild SLE Flare (15mg)","Mild SLE Flare (10mg)","Moderate SLE Flare (30mg)",
+      "Moderate SLE Flare (20mg)","Severe SLE Flare (0.5mg/kg)","Severe SLE Flare (0.6mg/kg)",
+      "Tapering off 5mg — fast","Tapering off 5mg — slow"],
+    renal: ["LN Standard (0.5mg/kg)","LN Standard (0.6mg/kg)","LN Higher (0.6mg/kg)",
+      "LN Higher (0.7mg/kg)","LN Exceptional (0.8mg/kg)","LN Exceptional (1.0mg/kg)"],
+    custom: ["Custom"]
+  };
+  function groupForRegimen(regName){
+    for (var key in REGIMEN_GROUPS){
+      if (REGIMEN_GROUPS[key].indexOf(regName) !== -1) return key;
+    }
+    return "nonrenal";
+  }
 
   var IV_OPTIONS = {
     moderate: ["Not given","125mg","250mg","375mg","500mg"],
@@ -519,7 +540,7 @@
 
   // ---------- DOM refs ----------
   var $ = function(id){ return document.getElementById(id); };
-  var regimenSel = $("regimen"), weightField = $("weightField"), weightInput = $("weight"),
+  var regimenSel = $("regimen"), screenGroupSel = $("screenGroup"), weightField = $("weightField"), weightInput = $("weight"),
       startDateInput = $("startDate"), startDateHint = $("startDateHint"),
       ivSection = $("ivSection"), ivDay1 = $("ivDay1"), ivDay2 = $("ivDay2"), ivDay3 = $("ivDay3"),
       customBox = $("customBox"), customRows = $("customRows"), addStepBtn = $("addStep"),
@@ -527,20 +548,41 @@
       emptyState = $("emptyState"), letterBox = $("letterBox"),
       doctorInput = $("doctor");
 
-  REGIMEN_ORDER.forEach(function(name){
-    var o = document.createElement("option");
-    o.value = name; o.textContent = name;
-    regimenSel.appendChild(o);
+  function populateRegimenOptions(group, preferred){
+    var names = REGIMEN_GROUPS[group] || REGIMEN_GROUPS.nonrenal;
+    var prev = regimenSel.value;
+    regimenSel.innerHTML = "";
+    names.forEach(function(name){
+      var o = document.createElement("option");
+      o.value = name; o.textContent = name;
+      regimenSel.appendChild(o);
+    });
+    if (preferred && names.indexOf(preferred) !== -1) regimenSel.value = preferred;
+    else if (names.indexOf(prev) !== -1) regimenSel.value = prev;
+    else regimenSel.value = names[0];
+  }
+  screenGroupSel.value = "nonrenal";
+  populateRegimenOptions("nonrenal", "Moderate SLE Flare (30mg)");
+  screenGroupSel.addEventListener("change", function(){
+    populateRegimenOptions(screenGroupSel.value);
+    render();
   });
-  regimenSel.value = "Moderate SLE Flare (30mg)";
 
-  function fillIvSelect(sel, options){
+  function fillIvSelect(sel, options, optionsKey){
+    // Rebuilding the <option> list resets the selected value, so this used to wipe out
+    // the clinician's IV dose choice every time render() ran (i.e. on every keystroke/
+    // change anywhere on the page). Only rebuild when the option set actually changes
+    // (moderate vs severe dosing), and restore the previous value afterwards.
+    if (sel.dataset.optionsKey === optionsKey) return;
+    var prev = sel.value;
     sel.innerHTML = "";
     options.forEach(function(v){
       var o = document.createElement("option");
       o.value = v; o.textContent = v;
       sel.appendChild(o);
     });
+    sel.dataset.optionsKey = optionsKey;
+    if (options.indexOf(prev) !== -1) sel.value = prev;
   }
 
   var today = new Date();
@@ -641,9 +683,9 @@
     // toggle IV section
     if (reg.ivOptions){
       ivSection.style.display = "";
-      fillIvSelect(ivDay1, IV_OPTIONS[reg.ivOptions]);
-      fillIvSelect(ivDay2, IV_OPTIONS[reg.ivOptions]);
-      fillIvSelect(ivDay3, IV_OPTIONS[reg.ivOptions]);
+      fillIvSelect(ivDay1, IV_OPTIONS[reg.ivOptions], reg.ivOptions);
+      fillIvSelect(ivDay2, IV_OPTIONS[reg.ivOptions], reg.ivOptions);
+      fillIvSelect(ivDay3, IV_OPTIONS[reg.ivOptions], reg.ivOptions);
     } else {
       ivSection.style.display = "none";
     }
@@ -921,7 +963,11 @@
     if (!params.has("r")) return;
 
     var regName = params.get("r");
-    if (REGIMENS[regName]) regimenSel.value = regName;
+    if (REGIMENS[regName]){
+      var group = groupForRegimen(regName);
+      screenGroupSel.value = group;
+      populateRegimenOptions(group, regName);
+    }
     if (params.has("s")) startDateInput.value = params.get("s");
 
     // Run one render pass so the weight/IV fields exist & are populated correctly, then fill them.
